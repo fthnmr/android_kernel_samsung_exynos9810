@@ -3,10 +3,12 @@ name: build-crownlte-ttl
 # Builds gavdoc38's lineage-24.0-xxksu3-susfs2 tree with the netfilter TTL/HL
 # targets enabled (plus a few low-risk wins), keeping xxKSU + SUSFS intact.
 #
-# Toolchain is fetched by sparse clone, not by the gitiles +archive endpoint:
-# that returns "INVALID_ARGUMENT: not suitable for the view" for subdirectories,
-# and the repo's default branch (main-kernel) only carries newer clangs, so the
-# r365631c tree has to come from the 'master' branch.
+# Toolchain: the distribution clang, not the AOSP prebuilt. The tree's
+# build.config.common names clang-r365631c, but fetching it is unreliable --
+# gitiles `+archive` on that subdirectory returns "INVALID_ARGUMENT: not
+# suitable for the view", the repo's default branch (main-kernel) no longer
+# carries it, and cloning from googlesource resets mid-transfer. Ubuntu's clang
+# builds this 4.9 tree; kernel config is what we're changing, not the compiler.
 
 on:
   workflow_dispatch:
@@ -23,28 +25,10 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y build-essential bc bison flex libssl-dev \
-            libelf-dev python3 zip unzip curl git
-
-      - name: Fetch clang r365631c (sparse clone of 'master')
-        run: |
-          git clone -q --depth 1 --filter=blob:none --sparse \
-            -b master https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86 clang-src
-          cd clang-src
-          git sparse-checkout set clang-r365631c
-          cd ..
-          mkdir -p prebuilts-master/clang/host/linux-x86
-          mv clang-src/clang-r365631c prebuilts-master/clang/host/linux-x86/
-          test -x prebuilts-master/clang/host/linux-x86/clang-r365631c/bin/clang
-          prebuilts-master/clang/host/linux-x86/clang-r365631c/bin/clang --version | head -1
-
-      - name: Fetch aarch64-linux-android binutils
-        run: |
-          git clone -q --depth 1 \
-            https://android.googlesource.com/platform/prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.9 gcc-src
-          mkdir -p prebuilts/gcc/linux-x86/aarch64
-          mv gcc-src prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.9
-          test -x prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.9/bin/aarch64-linux-android-ld
-          prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.9/bin/aarch64-linux-android-ld --version | head -1
+            libelf-dev python3 zip unzip curl git clang lld llvm \
+            gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu
+          clang --version | head -1
+          aarch64-linux-gnu-ld --version | head -1
 
       - name: Enable config symbols
         run: |
@@ -74,12 +58,11 @@ jobs:
 
       - name: Configure
         run: |
-          export PATH="$PWD/prebuilts-master/clang/host/linux-x86/clang-r365631c/bin:$PWD/prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.9/bin:$PATH"
           make O=out ARCH=arm64 CC=clang CLANG_TRIPLE=aarch64-linux-gnu- \
-            CROSS_COMPILE=aarch64-linux-android- \
+            CROSS_COMPILE=aarch64-linux-gnu- \
             exynos9810-crownlte_defconfig
           make O=out ARCH=arm64 CC=clang CLANG_TRIPLE=aarch64-linux-gnu- \
-            CROSS_COMPILE=aarch64-linux-android- olddefconfig
+            CROSS_COMPILE=aarch64-linux-gnu- olddefconfig
 
       - name: Verify config gate
         run: |
@@ -106,9 +89,8 @@ jobs:
 
       - name: Build
         run: |
-          export PATH="$PWD/prebuilts-master/clang/host/linux-x86/clang-r365631c/bin:$PWD/prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.9/bin:$PATH"
           make O=out ARCH=arm64 CC=clang CLANG_TRIPLE=aarch64-linux-gnu- \
-            CROSS_COMPILE=aarch64-linux-android- -j"$(nproc)"
+            CROSS_COMPILE=aarch64-linux-gnu- -j"$(nproc)"
 
       - uses: actions/upload-artifact@v4
         with:
