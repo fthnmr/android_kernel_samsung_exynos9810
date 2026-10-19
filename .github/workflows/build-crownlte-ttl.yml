@@ -38,12 +38,14 @@ jobs:
         run: |
           D=arch/arm64/configs/exynos9810-crownlte_defconfig
           add() { grep -q "^$1=" "$D" || echo "$1" >> "$D"; }
-          # required: the two targets
-          add CONFIG_NETFILTER_XT_TARGET_TTL=y
+          # This 4.9 tree has NO NETFILTER_XT_TARGET_TTL symbol and no xt_TTL.c:
+          # xt_HL.c registers BOTH the IPv4 TTL and IPv6 HL targets, and Kconfig
+          # gates them on NETFILTER_XT_TARGET_HL. The match side is _MATCH_HL
+          # (there is no NETFILTER_XT_MATCH_TTL either).
+          add CONFIG_NETFILTER_ADVANCED=y
           add CONFIG_NETFILTER_XT_TARGET_HL=y
-          # cheap: matching counterparts, handy for debugging
-          add CONFIG_NETFILTER_XT_MATCH_TTL=y
           add CONFIG_NETFILTER_XT_MATCH_HL=y
+          add CONFIG_IP_NF_MANGLE=y
           # tethered throughput / latency
           add CONFIG_TCP_CONG_ADVANCED=y
           add CONFIG_TCP_CONG_BBR=y
@@ -72,8 +74,8 @@ jobs:
         run: |
           C=out/.config
           echo "=== must be =y (build fails otherwise) ==="
-          for s in NETFILTER_XT_TARGET_TTL NETFILTER_XT_TARGET_HL \
-                   NETFILTER_XT_MATCH_TTL NETFILTER_XT_MATCH_HL; do
+          for s in NETFILTER_XT_TARGET_HL NETFILTER_XT_MATCH_HL \
+                   NETFILTER_ADVANCED IP_NF_MANGLE; do
             v=$(grep -E "^CONFIG_${s}=" "$C" || echo "CONFIG_${s}=MISSING")
             echo "$v"
             case "$v" in *=y) ;; *) echo "FATAL: $s not enabled"; exit 1 ;; esac
