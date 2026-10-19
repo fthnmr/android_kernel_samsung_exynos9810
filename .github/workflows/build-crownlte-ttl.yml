@@ -1,0 +1,65 @@
+name: build-crownlte-ttl
+
+# Builds gavdoc38's lineage-24.0-xxksu3-susfs2 tree with the two netfilter
+# targets the phone lacks (TTL/HL), keeping xxKSU + SUSFS intact.
+# Download the "Image" artifact, then repack it into the v3.3.0 boot.img
+# with magiskboot (see README-ttl-kernel.md).
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential bc bison flex libssl-dev \
+            libelf-dev python3 zip unzip curl git
+
+      - name: Fetch clang r365631c (matches build.config.common)
+        run: |
+          mkdir -p prebuilts-master/clang/host/linux-x86/clang-r365631c
+          curl -fsSL -o clang.tgz \
+            "https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/master/clang-r365631c.tar.gz"
+          tar -xzf clang.tgz -C prebuilts-master/clang/host/linux-x86/clang-r365631c
+
+      - name: Fetch aarch64-linux-android binutils
+        run: |
+          mkdir -p prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.9
+          curl -fsSL -o gcc.tgz \
+            "https://android.googlesource.com/platform/prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.9/+archive/refs/heads/master.tar.gz"
+          tar -xzf gcc.tgz -C prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.9
+
+      - name: Enable TTL + HL targets
+        run: |
+          grep -q NETFILTER_XT_TARGET_TTL arch/arm64/configs/exynos9810-crownlte_defconfig || \
+            echo "CONFIG_NETFILTER_XT_TARGET_TTL=y" >> arch/arm64/configs/exynos9810-crownlte_defconfig
+          grep -q NETFILTER_XT_TARGET_HL arch/arm64/configs/exynos9810-crownlte_defconfig || \
+            echo "CONFIG_NETFILTER_XT_TARGET_HL=y" >> arch/arm64/configs/exynos9810-crownlte_defconfig
+          tail -3 arch/arm64/configs/exynos9810-crownlte_defconfig
+
+      - name: Configure
+        run: |
+          export PATH="$PWD/prebuilts-master/clang/host/linux-x86/clang-r365631c/bin:$PWD/prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.9/bin:$PATH"
+          make O=out ARCH=arm64 CC=clang CLANG_TRIPLE=aarch64-linux-gnu- \
+            CROSS_COMPILE=aarch64-linux-android- \
+            exynos9810-crownlte_defconfig
+          grep -E "NETFILTER_XT_TARGET_(TTL|HL)" out/.config
+
+      - name: Build
+        run: |
+          export PATH="$PWD/prebuilts-master/clang/host/linux-x86/clang-r365631c/bin:$PWD/prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.9/bin:$PATH"
+          make O=out ARCH=arm64 CC=clang CLANG_TRIPLE=aarch64-linux-gnu- \
+            CROSS_COMPILE=aarch64-linux-android- -j"$(nproc)"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Image
+          path: out/arch/arm64/boot/Image
+          if-no-files-found: error
