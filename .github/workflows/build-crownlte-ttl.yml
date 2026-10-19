@@ -3,10 +3,10 @@ name: build-crownlte-ttl
 # Builds gavdoc38's lineage-24.0-xxksu3-susfs2 tree with the netfilter TTL/HL
 # targets enabled (plus a few low-risk wins), keeping xxKSU + SUSFS intact.
 #
-# Required  : NETFILTER_XT_TARGET_TTL, NETFILTER_XT_TARGET_HL   -> -j TTL works
-# Optional  : BBR + fq/fq_codel, zram LZ4 default, TMPFS_XATTR   -> tethered perf
-# Never     : CONFIG_NF_TABLES  (would move iptables to the nft backend and change
-#             how these very rules resolve; stay on legacy xtables)
+# Toolchain is fetched by sparse clone, not by the gitiles +archive endpoint:
+# that returns "INVALID_ARGUMENT: not suitable for the view" for subdirectories,
+# and the repo's default branch (main-kernel) only carries newer clangs, so the
+# r365631c tree has to come from the 'master' branch.
 
 on:
   workflow_dispatch:
@@ -25,19 +25,26 @@ jobs:
           sudo apt-get install -y build-essential bc bison flex libssl-dev \
             libelf-dev python3 zip unzip curl git
 
-      - name: Fetch clang r365631c (matches build.config.common)
+      - name: Fetch clang r365631c (sparse clone of 'master')
         run: |
-          mkdir -p prebuilts-master/clang/host/linux-x86/clang-r365631c
-          curl -fsSL -o clang.tgz \
-            "https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/master/clang-r365631c.tar.gz"
-          tar -xzf clang.tgz -C prebuilts-master/clang/host/linux-x86/clang-r365631c
+          git clone -q --depth 1 --filter=blob:none --sparse \
+            -b master https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86 clang-src
+          cd clang-src
+          git sparse-checkout set clang-r365631c
+          cd ..
+          mkdir -p prebuilts-master/clang/host/linux-x86
+          mv clang-src/clang-r365631c prebuilts-master/clang/host/linux-x86/
+          test -x prebuilts-master/clang/host/linux-x86/clang-r365631c/bin/clang
+          prebuilts-master/clang/host/linux-x86/clang-r365631c/bin/clang --version | head -1
 
       - name: Fetch aarch64-linux-android binutils
         run: |
-          mkdir -p prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.9
-          curl -fsSL -o gcc.tgz \
-            "https://android.googlesource.com/platform/prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.9/+archive/refs/heads/master.tar.gz"
-          tar -xzf gcc.tgz -C prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.9
+          git clone -q --depth 1 \
+            https://android.googlesource.com/platform/prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.9 gcc-src
+          mkdir -p prebuilts/gcc/linux-x86/aarch64
+          mv gcc-src prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.9
+          test -x prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.9/bin/aarch64-linux-android-ld
+          prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.9/bin/aarch64-linux-android-ld --version | head -1
 
       - name: Enable config symbols
         run: |
@@ -62,7 +69,7 @@ jobs:
           # drop the "-ies" suffix (SUSFS masks uname, but don't ship a tell)
           sed -i 's/^CONFIG_LOCALVERSION=.*/CONFIG_LOCALVERSION=""/' "$D" || true
           grep -q '^CONFIG_LOCALVERSION=' "$D" || echo 'CONFIG_LOCALVERSION=""' >> "$D"
-          echo "--- appended ---"
+          echo "--- tail of defconfig ---"
           tail -14 "$D"
 
       - name: Configure
@@ -85,9 +92,9 @@ jobs:
             case "$v" in *=y) ;; *) echo "FATAL: $s not enabled"; exit 1 ;; esac
           done
 
-          echo "=== KernelSU / SUSFS must survive ==="
-          grep -E "^CONFIG_KSU=|^CONFIG_KSU_" "$C" || echo "WARN: no CONFIG_KSU* in .config"
-          grep -iE "susfs" "$C" || echo "note: SUSFS has no Kconfig symbol in this tree (source-patched) — expected"
+          echo "=== KernelSU must survive ==="
+          grep -E "^CONFIG_KSU=" "$C" || echo "WARN: no CONFIG_KSU in .config"
+          grep -iE "susfs" "$C" || echo "note: SUSFS has no Kconfig symbol here (source-patched) - expected"
 
           echo "=== optional: report what actually took effect ==="
           for s in TCP_CONG_BBR NET_SCH_FQ NET_SCH_FQ_CODEL ZRAM_DEF_COMP_LZ4 \
