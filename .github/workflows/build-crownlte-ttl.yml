@@ -1,9 +1,12 @@
 name: build-crownlte-ttl
 
-# Builds gavdoc38's lineage-24.0-xxksu3-susfs2 tree with the two netfilter
-# targets the phone lacks (TTL/HL), keeping xxKSU + SUSFS intact.
-# Download the "Image" artifact, then repack it into the v3.3.0 boot.img
-# with magiskboot (see README-ttl-kernel.md).
+# Builds gavdoc38's lineage-24.0-xxksu3-susfs2 tree with the netfilter TTL/HL
+# targets enabled (plus a few low-risk wins), keeping xxKSU + SUSFS intact.
+#
+# Required  : NETFILTER_XT_TARGET_TTL, NETFILTER_XT_TARGET_HL   -> -j TTL works
+# Optional  : BBR + fq/fq_codel, zram LZ4 default, TMPFS_XATTR   -> tethered perf
+# Never     : CONFIG_NF_TABLES  (would move iptables to the nft backend and change
+#             how these very rules resolve; stay on legacy xtables)
 
 on:
   workflow_dispatch:
@@ -36,13 +39,31 @@ jobs:
             "https://android.googlesource.com/platform/prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.9/+archive/refs/heads/master.tar.gz"
           tar -xzf gcc.tgz -C prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.9
 
-      - name: Enable TTL + HL targets
+      - name: Enable config symbols
         run: |
-          grep -q NETFILTER_XT_TARGET_TTL arch/arm64/configs/exynos9810-crownlte_defconfig || \
-            echo "CONFIG_NETFILTER_XT_TARGET_TTL=y" >> arch/arm64/configs/exynos9810-crownlte_defconfig
-          grep -q NETFILTER_XT_TARGET_HL arch/arm64/configs/exynos9810-crownlte_defconfig || \
-            echo "CONFIG_NETFILTER_XT_TARGET_HL=y" >> arch/arm64/configs/exynos9810-crownlte_defconfig
-          tail -3 arch/arm64/configs/exynos9810-crownlte_defconfig
+          D=arch/arm64/configs/exynos9810-crownlte_defconfig
+          add() { grep -q "^$1=" "$D" || echo "$1" >> "$D"; }
+          # required: the two targets
+          add CONFIG_NETFILTER_XT_TARGET_TTL=y
+          add CONFIG_NETFILTER_XT_TARGET_HL=y
+          # cheap: matching counterparts, handy for debugging
+          add CONFIG_NETFILTER_XT_MATCH_TTL=y
+          add CONFIG_NETFILTER_XT_MATCH_HL=y
+          # tethered throughput / latency
+          add CONFIG_TCP_CONG_ADVANCED=y
+          add CONFIG_TCP_CONG_BBR=y
+          add CONFIG_NET_SCH_FQ=y
+          add CONFIG_NET_SCH_FQ_CODEL=y
+          # zram + KernelSU mount needs
+          add CONFIG_CRYPTO_LZ4=y
+          add CONFIG_CRYPTO_LZ4HC=y
+          add CONFIG_ZRAM_DEF_COMP_LZ4=y
+          add CONFIG_TMPFS_XATTR=y
+          # drop the "-ies" suffix (SUSFS masks uname, but don't ship a tell)
+          sed -i 's/^CONFIG_LOCALVERSION=.*/CONFIG_LOCALVERSION=""/' "$D" || true
+          grep -q '^CONFIG_LOCALVERSION=' "$D" || echo 'CONFIG_LOCALVERSION=""' >> "$D"
+          echo "--- appended ---"
+          tail -14 "$D"
 
       - name: Configure
         run: |
@@ -50,7 +71,31 @@ jobs:
           make O=out ARCH=arm64 CC=clang CLANG_TRIPLE=aarch64-linux-gnu- \
             CROSS_COMPILE=aarch64-linux-android- \
             exynos9810-crownlte_defconfig
-          grep -E "NETFILTER_XT_TARGET_(TTL|HL)" out/.config
+          make O=out ARCH=arm64 CC=clang CLANG_TRIPLE=aarch64-linux-gnu- \
+            CROSS_COMPILE=aarch64-linux-android- olddefconfig
+
+      - name: Verify config gate
+        run: |
+          C=out/.config
+          echo "=== must be =y (build fails otherwise) ==="
+          for s in NETFILTER_XT_TARGET_TTL NETFILTER_XT_TARGET_HL \
+                   NETFILTER_XT_MATCH_TTL NETFILTER_XT_MATCH_HL; do
+            v=$(grep -E "^CONFIG_${s}=" "$C" || echo "CONFIG_${s}=MISSING")
+            echo "$v"
+            case "$v" in *=y) ;; *) echo "FATAL: $s not enabled"; exit 1 ;; esac
+          done
+
+          echo "=== KernelSU / SUSFS must survive ==="
+          grep -E "^CONFIG_KSU=|^CONFIG_KSU_" "$C" || echo "WARN: no CONFIG_KSU* in .config"
+          grep -iE "susfs" "$C" || echo "note: SUSFS has no Kconfig symbol in this tree (source-patched) — expected"
+
+          echo "=== optional: report what actually took effect ==="
+          for s in TCP_CONG_BBR NET_SCH_FQ NET_SCH_FQ_CODEL ZRAM_DEF_COMP_LZ4 \
+                   TMPFS_XATTR CRYPTO_LZ4HC; do
+            grep -E "^CONFIG_${s}=" "$C" || echo "CONFIG_${s} not set"
+          done
+          grep -E '^CONFIG_DEFAULT_TCP_CONG=' "$C" || true
+          grep -E '^CONFIG_LOCALVERSION=' "$C" || true
 
       - name: Build
         run: |
