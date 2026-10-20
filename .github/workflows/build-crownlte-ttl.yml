@@ -71,6 +71,18 @@ jobs:
           # now carries a real 4.9-format table. Requires EXPERT.
           add CONFIG_EXPERT=y
           add CONFIG_CFG80211_INTERNAL_REGDB=y
+          # The Samsung vendor patch CONFIG_CFG80211_REG_NOT_UPDATED makes
+          # queue_regulatory_request() discard EVERY regulatory hint, so the
+          # kernel regdomain can never leave world (00) - even though the
+          # bcmdhd driver already calls regulatory_hint(wiphy, "MU") and the
+          # dmesg shows "country code = MU/0 is already configured". With the
+          # hint discarded, the MU regdb we ship is unreachable. It is
+          # "default n" upstream; the vendor defconfig switches it on.
+          sed -i 's/^CONFIG_CFG80211_REG_NOT_UPDATED=y/# CONFIG_CFG80211_REG_NOT_UPDATED is not set/' "$D"
+          if grep -q '^CONFIG_CFG80211_REG_NOT_UPDATED=y' "$D"; then
+            echo "FATAL: could not disable CONFIG_CFG80211_REG_NOT_UPDATED"; exit 1
+          fi
+          echo "REG_NOT_UPDATED now: $(grep -E 'CFG80211_REG_NOT_UPDATED' "$D" || echo '(unset)')" 
           add CONFIG_NETFILTER_ADVANCED=y
           add CONFIG_NETFILTER_XT_TARGET_HL=y
           add CONFIG_NETFILTER_XT_MATCH_HL=y
@@ -113,6 +125,12 @@ jobs:
             echo "$v"
             case "$v" in *=y) ;; *) echo "FATAL: $s not enabled"; exit 1 ;; esac
           done
+
+          echo "=== the Samsung regulatory patch must be OFF ==="
+          if grep -q "^CONFIG_CFG80211_REG_NOT_UPDATED=y" "$C"; then
+            echo "FATAL: CFG80211_REG_NOT_UPDATED still set - hints would be discarded"; exit 1
+          fi
+          echo "OK: CFG80211_REG_NOT_UPDATED not set"
 
           echo "=== KernelSU must survive ==="
           grep -E "^CONFIG_KSU=" "$C" || echo "WARN: no CONFIG_KSU in .config"
