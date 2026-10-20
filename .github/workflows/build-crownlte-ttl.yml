@@ -64,12 +64,11 @@ jobs:
           # (there is no NETFILTER_XT_MATCH_TTL either).
           # Regulatory domain: the phone's driver already reports MU
           # (mCountryCodeFromDriverMU) but the KERNEL regdomain was stuck at
-          # world (00) because this tree has no regulatory database: INTERNAL_REGDB
-          # was off, there is no regulatory.db on the device and no crda/regd
-          # daemon, so v4.9's reg.c kept the hardcoded world_regdom (which has
-          # no country tables at all -> "iw reg set MU" was accepted then
-          # reverted). Enabling INTERNAL_REGDB + shipping net/wireless/db.txt
-          # gives the kernel a real country table. Requires EXPERT.
+          # world (00): this tree had no regulatory database at all (INTERNAL_REGDB
+          # off, no regulatory.db on the device, no crda/regd daemon), so v4.9's
+          # reg.c kept the hardcoded world_regdom - which has NO country tables,
+          # hence "iw reg set MU" was accepted then reverted. net/wireless/db.txt
+          # now carries a real 4.9-format table. Requires EXPERT.
           add CONFIG_EXPERT=y
           add CONFIG_CFG80211_INTERNAL_REGDB=y
           add CONFIG_NETFILTER_ADVANCED=y
@@ -108,7 +107,8 @@ jobs:
           C=out/.config
           echo "=== must be =y (build fails otherwise) ==="
           for s in NETFILTER_XT_TARGET_HL NETFILTER_XT_MATCH_HL \
-                   NETFILTER_ADVANCED IP_NF_MANGLE; do
+                   NETFILTER_ADVANCED IP_NF_MANGLE \
+                   CFG80211_INTERNAL_REGDB EXPERT; do
             v=$(grep -E "^CONFIG_${s}=" "$C" || echo "CONFIG_${s}=MISSING")
             echo "$v"
             case "$v" in *=y) ;; *) echo "FATAL: $s not enabled"; exit 1 ;; esac
@@ -128,14 +128,23 @@ jobs:
 
       - name: Verify regdb
         run: |
-          R=out/net/wireless/regdb.c
-          if [ ! -f "$R" ]; then echo "FATAL: regdb.c not generated"; exit 1; fi
+          # Parse db.txt with the tree's own genregdb.awk - exactly what the
+          # kernel build does, but without waiting for the full compile.
+          R=/tmp/regdb.c
+          awk -f net/wireless/genregdb.awk < net/wireless/db.txt > "$R" 2>/tmp/awk.err
+          if [ ! -s "$R" ]; then echo "FATAL: regdb empty"; cat /tmp/awk.err; exit 1; fi
+          [ -s /tmp/awk.err ] && { echo "awk warnings:"; cat /tmp/awk.err; }
           echo "=== countries built in ==="
           grep -oE "regdom_[A-Z]{2} =" "$R" | tr -d ' =' | sed 's/regdom_//' | tr '\n' ' '; echo
           echo "=== MU rules (5735-5835 must be present, 30 dBm, NO passive-scan) ==="
           grep -A12 "regdom_MU = {" "$R" | head -14
           grep -q "REG_RULE_EXT(5735, 5835" "$R" || { echo "FATAL: MU 5735-5835 missing"; exit 1; }
           echo "OK: MU 5735-5835 present"
+          echo "=== no 6GHz / >160MHz rules (4.9 has no 6GHz band) ==="
+          if grep -qE "REG_RULE_EXT\(59[0-9]{2}|, 320," "$R"; then
+            echo "FATAL: 6GHz or >160MHz rule in db.txt"; exit 1
+          fi
+          echo "OK: no 6GHz / >160MHz rules"
 
       - name: Build
         run: |
