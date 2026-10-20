@@ -31,10 +31,19 @@ jobs:
       # kernel matches the manager already on the phone.
       - name: Pin KernelSU to the release commit
         run: |
-          cd KernelSU
-          git fetch --unshallow 2>/dev/null || git fetch --all --tags 2>/dev/null || true
-          git checkout 5c595611d1924b1bbc86e84b0766fb91a52c257a
+          # The submodule from actions/checkout is shallow, so checking out an
+          # older commit fails with "unable to read tree". Clone the repo fresh
+          # and swap the directory instead (drivers/kernelsu symlinks into it).
+          rm -rf /tmp/ksu
+          git clone -q --filter=blob:none https://github.com/gavdoc38/KernelSU.git /tmp/ksu
+          cd /tmp/ksu
+          git checkout -q 5c595611d1924b1bbc86e84b0766fb91a52c257a
           echo "KernelSU at: $(git log --oneline -1)"
+          echo "KSU_VERSION: $(grep -m1 -E 'KSU_VERSION' kernel/Makefile 2>/dev/null || echo n/a)"
+          cd "$GITHUB_WORKSPACE"
+          rm -rf KernelSU
+          mv /tmp/ksu KernelSU
+          ls -ld KernelSU drivers/kernelsu 2>/dev/null || true
 
       - name: Dependencies
         run: |
