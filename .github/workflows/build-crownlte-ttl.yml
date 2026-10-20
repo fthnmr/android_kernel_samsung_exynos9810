@@ -25,6 +25,17 @@ jobs:
           # with "can't open file drivers/kernelsu/Kconfig".
           submodules: recursive
 
+      # The KernelSU submodule has moved past the commit the v3.3.0 release was
+      # built with. Building HEAD gives CONFIG_KSU=y but a driver the uapi-v5
+      # manager cannot talk to -> "installed" but no `su`. Pin it back so the
+      # kernel matches the manager already on the phone.
+      - name: Pin KernelSU to the release commit
+        run: |
+          cd KernelSU
+          git fetch --unshallow 2>/dev/null || git fetch --all --tags 2>/dev/null || true
+          git checkout 5c595611d1924b1bbc86e84b0766fb91a52c257a
+          echo "KernelSU at: $(git log --oneline -1)"
+
       - name: Dependencies
         run: |
           sudo apt-get update
