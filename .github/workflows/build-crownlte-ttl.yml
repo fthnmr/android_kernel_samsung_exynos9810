@@ -106,6 +106,18 @@ jobs:
           echo "--- tail of defconfig ---"
           tail -14 "$D"
 
+      # The Broadcom bcmdhd driver is regulatory-CUSTOM: the kernel regdomain is
+      # never applied to this radio and the channel list comes from the wifi chip's
+      # own country table (WLC_GET_BANDLIST). The chip's MU table omits UNII-3,
+      # so 149-165 stay "(disabled)" no matter what the kernel regdb says.
+      # Remap MU -> US before the country is programmed into the chip.
+      - name: Patch driver country remap (MU -> US)
+        run: |
+          F=drivers/net/wireless/bcmdhd_101_16/wl_cfg80211.c
+          python3 patch-mu2us.py "$F"
+          grep -q "PATCH-MU2US" "$F" || { echo "FATAL: driver patch missing"; exit 1; }
+          sed -n '/PATCH-MU2US/,+6p' "$F"
+
       - name: Configure
         run: |
           make O=out ARCH=arm64 CC=clang CLANG_TRIPLE=aarch64-linux-gnu- \
