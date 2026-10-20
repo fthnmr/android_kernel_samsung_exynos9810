@@ -62,6 +62,16 @@ jobs:
           # xt_HL.c registers BOTH the IPv4 TTL and IPv6 HL targets, and Kconfig
           # gates them on NETFILTER_XT_TARGET_HL. The match side is _MATCH_HL
           # (there is no NETFILTER_XT_MATCH_TTL either).
+          # Regulatory domain: the phone's driver already reports MU
+          # (mCountryCodeFromDriverMU) but the KERNEL regdomain was stuck at
+          # world (00) because this tree has no regulatory database: INTERNAL_REGDB
+          # was off, there is no regulatory.db on the device and no crda/regd
+          # daemon, so v4.9's reg.c kept the hardcoded world_regdom (which has
+          # no country tables at all -> "iw reg set MU" was accepted then
+          # reverted). Enabling INTERNAL_REGDB + shipping net/wireless/db.txt
+          # gives the kernel a real country table. Requires EXPERT.
+          add CONFIG_EXPERT=y
+          add CONFIG_CFG80211_INTERNAL_REGDB=y
           add CONFIG_NETFILTER_ADVANCED=y
           add CONFIG_NETFILTER_XT_TARGET_HL=y
           add CONFIG_NETFILTER_XT_MATCH_HL=y
@@ -115,6 +125,17 @@ jobs:
           done
           grep -E '^CONFIG_DEFAULT_TCP_CONG=' "$C" || true
           grep -E '^CONFIG_LOCALVERSION=' "$C" || true
+
+      - name: Verify regdb
+        run: |
+          R=out/net/wireless/regdb.c
+          if [ ! -f "$R" ]; then echo "FATAL: regdb.c not generated"; exit 1; fi
+          echo "=== countries built in ==="
+          grep -oE "regdom_[A-Z]{2} =" "$R" | tr -d ' =' | sed 's/regdom_//' | tr '\n' ' '; echo
+          echo "=== MU rules (5735-5835 must be present, 30 dBm, NO passive-scan) ==="
+          grep -A12 "regdom_MU = {" "$R" | head -14
+          grep -q "REG_RULE_EXT(5735, 5835" "$R" || { echo "FATAL: MU 5735-5835 missing"; exit 1; }
+          echo "OK: MU 5735-5835 present"
 
       - name: Build
         run: |
